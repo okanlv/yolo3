@@ -38,21 +38,9 @@ Otherwise run the following command.
 ```
 ## Download pretrained models ##
 
-Inside the yolo3 directory
+Inside the yolo3 directory, run
 
 ```
-makedir weights
-cd weights
+./download_weights.sh
 ```
-Download the detection network weights
-
-```
-wget https://pjreddie.com/media/files/yolov3.weights 
-```
-Download the classification network weights
-
-```
-wget https://pjreddie.com/media/files/darknet53.conv.74
-```
-
 
