@@ -1,5 +1,5 @@
 # yolo3 
-Yolov3 implementation in pytorch based on https://github.com/ultralytics/yolov3
+Yolov3 implementation with pytorch based on https://github.com/ultralytics/yolov3
 
 ## Clone the repository ##
   
@@ -66,9 +66,7 @@ Afterwards, run `voc_label.py` to generate the following text files containing i
 2012_val.txt
 ```
 
-We can use one of the above files to train our model and the other one to test it. As an alternative,
-following https://pjreddie.com/darknet/yolo/, we can combine everything except 2007_test.txt into one
-.txt file and use it to train our model with the following code.
+We can use one of the above files to train our model and the other one to test it. As an alternative, following https://pjreddie.com/darknet/yolo/, we can combine everything except 2007_test.txt into one .txt file and use it to train our model with the following code.
 
 ```
 cat 2007_train.txt 2007_val.txt 2012_*.txt > train.txt
