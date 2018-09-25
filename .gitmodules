@@ -1,3 +1,6 @@
 [submodule "coco"]
 	path = coco
 	url = https://github.com/pdollar/coco
+[submodule "generate_anchors"]
+	path = generate_anchors
+	url = https://github.com/Jumabek/darknet_scripts
