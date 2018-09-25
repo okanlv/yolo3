@@ -1,3 +1,7 @@
+"""
+This code is taken from https://pjreddie.com/media/files/voc_label.py
+"""
+
 import xml.etree.ElementTree as ET
 import pickle
 import os
@@ -5,7 +9,7 @@ from os import listdir, getcwd
 from os.path import join
 
 # sets=[('2012', 'train'), ('2012', 'val'), ('2007', 'train'), ('2007', 'val'), ('2007', 'test')]
-sets=[('2007', 'train'), ('2007', 'val'), ('2007', 'test')]
+sets = [('2007', 'train'), ('2007', 'val'), ('2007', 'test')]
 
 classes = ["aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"]
 
@@ -21,7 +25,8 @@ def convert(size, box):
     w = w*dw
     y = y*dh
     h = h*dh
-    return (x,y,w,h)
+    return x, y, w, h
+
 
 def convert_annotation(year, image_id):
     in_file = open('VOCdevkit/VOC%s/Annotations/%s.xml'%(year, image_id))
@@ -43,15 +48,22 @@ def convert_annotation(year, image_id):
         bb = convert((w,h), b)
         out_file.write(str(cls_id) + " " + " ".join([str(a) for a in bb]) + '\n')
 
+
 wd = getcwd()
 
 for year, image_set in sets:
     if not os.path.exists('VOCdevkit/VOC%s/labels/'%(year)):
         os.makedirs('VOCdevkit/VOC%s/labels/'%(year))
     image_ids = open('VOCdevkit/VOC%s/ImageSets/Main/%s.txt'%(year, image_set)).read().strip().split()
+    # list_file keeps all image paths
     list_file = open('%s_%s.txt'%(year, image_set), 'w')
     for image_id in image_ids:
+        # write the image path
         list_file.write('%s/VOCdevkit/VOC%s/JPEGImages/%s.jpg\n'%(wd, year, image_id))
+        # convert box labels to normalized [class_id, x, y, w, h]
+        # save the converted labels in labels folder one file per one image
+        # each line keeps only one box label
+        # so an image with 3 box labels is represented with a text file with 3 lines
         convert_annotation(year, image_id)
     list_file.close()
 

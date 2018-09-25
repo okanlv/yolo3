@@ -91,7 +91,7 @@ def main(opt):
     # net['learning_rate'] *= opt.ngpus  # TODO
     print('net', json.dumps(net, indent=4))
 
-    backbone_weights_path = 'darknet53/darknet53.conv.74'
+    backbone_weights_path = 'weights/darknet53.conv.74'
     if backbone_weights_path.endswith('.74'):  # saved in darknet format
         load_backbone_weights(model, backbone_weights_path)
 
