@@ -66,11 +66,7 @@ class load_images_and_labels():  # for training
         with open(path, 'r') as file:
             self.img_files = file.readlines()
 
-        if platform == 'darwin':  # MacOS (local)
-            self.img_files = [path.replace('\n', '').replace('/images', '/Users/glennjocher/Downloads/DATA/coco/images')
-                              for path in self.img_files]
-        else:  # linux (gcp cloud)
-            self.img_files = [path.replace('\n', '').replace('/images', './coco/images') for path in self.img_files]
+        self.img_files = [path.replace('\n', '').replace('/images', './coco/images') for path in self.img_files]
 
         self.label_files = [path.replace('images', 'labels').replace('.png', '.txt').replace('.jpg', '.txt') for path in
                             self.img_files]

@@ -4,7 +4,6 @@ import sys
 import torch.nn as nn
 
 from utils.utils import *
-from utils.parse_config import *
 from parser import *
 
 

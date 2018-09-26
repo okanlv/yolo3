@@ -27,7 +27,7 @@ parser.add_argument('-avg', default=3, help='avg')
 
 parser.add_argument('-gpu_index', default=0, help='gpu_index')
 parser.add_argument('-gpu_list', default='', help='gpu_list')
-parser.add_argument('-nogpu', default=0, help='avg')
+parser.add_argument('-nogpu', default=0, help='do not use gpu if 1')
 
 parser.add_argument('-clear', default=0, help='clear')
 parser.add_argument('-fullscreen', default=0, help='fullscreen')
@@ -55,28 +55,59 @@ if cuda:
 
 
 def main(opt):
-    os.makedirs('checkpoints', exist_ok=True)
+
+    if opt.nogpu:
+        opt.gpu_index = -1
+
+    if not torch.cuda.is_available():
+        opt.gpu_index = -1
+
+    gpu_index = opt.gpu_index
+    prefix = opt.prefix
+    thresh = opt.thresh
+    hier_thresh = opt.hier_thresh
+    cam_index = opt.cam_index
+    frame_skip = opt.frame_skip
+    avg = opt.avg
+
+    gpus = 0
+    gpu = 0
+    ngpus = 0
+
+    if opt.gpu_list:
+        gpus = [int(gpu) for gpu in opt.gpu_list.split(',')]
+        ngpus = len(gpus)
+    else:
+        gpu = gpu_index
+        gpus = gpu
+        ngpus = 1
+
+    clear = opt.clear
+    fullscreen = opt.fullscreen
+    width = opt.width
+    height = opt.height
+    fps = opt.fps
+
+    datacfg = opt.datacfg
+    cfgfile = opt.cfg
+    weightfile = opt.weights
+    # filename = opt.filename ?? what is this, detector.c
+    # os.makedirs('checkpoints', exist_ok=True)
 
     # Configure run
-    data_config = parse_data_config(opt.datacfg)
-    data_config.setdefault('train', 'data/train.list')
-    data_config.setdefault('backup', '/backup/')
+    options = parse_data_config(opt.datacfg)
+    options.setdefault('train', 'data/train.list')
+    options.setdefault('backup', 'backup/')
+    train_images = options['train']
+    backup_directory = options['backup']
+    os.makedirs(backup_directory, exist_ok=True)
 
-    train_images = data_config['train']
-    backup_directory = data_config['backup']
+    # char *base = basecfg(cfgfile);
+    # printf("%s\n", base);
+    print('data_config', json.dumps(options, indent=4))
+    avg_loss = -1
 
-    print('data_config', json.dumps(data_config, indent=4))
-
-
-
-    ## TODO modify model loader nets[i] = load_network(cfgfile, weightfile, clear); in detector.c line 26
-
-    num_classes = data_config['classes']
-    if platform == 'darwin':  # MacOS (local)
-        train_path = data_config['train']
-    else:  # linux (cloud, i.e. gcp)
-        train_path = './coco/trainvalno5k.part'
-
+    # TODO modify model loader nets[i] = load_network(cfgfile, weightfile, clear); in detector.c line 26
     # Initialize model
     model = Darknet(opt.cfg, opt.backbone_cfg, opt.img_size)
 
@@ -85,37 +116,33 @@ def main(opt):
     net['height'] = opt.img_size
     net['width'] = opt.img_size
 
-    if opt.clear:
-        net['seen'] = 0
-
     # net['learning_rate'] *= opt.ngpus  # TODO
     print('net', json.dumps(net, indent=4))
 
+    # load the classifier weights
     backbone_weights_path = 'weights/darknet53.conv.74'
-    if backbone_weights_path.endswith('.74'):  # saved in darknet format
-        load_backbone_weights(model, backbone_weights_path)
+    load_backbone_weights(model, backbone_weights_path)
 
-
+    # total number of images the networks saw during the training
+    # should be run after the weights are loaded
+    if opt.clear:
+        net['seen'] = 0
 
     # imgs = net['batch'] *  net['subdivisions'] * ngpus TODO
     imgs = net['batch'] * net['subdivisions']
+    print("Learning Rate: {}, Momentum: {}, Decay: {}\n".format(net['learning_rate'], net['momentum'], net['decay']))
 
-    print("Learning Rate: {}, Momentum: {}, Decay: {}\n".format(net['learning_rate'], net['momentum'], net['decay']));
-
+    # extract the last layer information
     l = model.module_defs[-1]
-
-    # Get dataloader
-    dataloader = load_images_and_labels(train_path, batch_size=opt.batch_size, img_size=opt.img_size, augment=True,
-                                        randomize=l['random'])
-
-    ###########################################################################
-
     classes = l['classes']
     jitter = l['jitter']
 
+    # Get dataloader
+    dataloader = load_images_and_labels(train_images, batch_size=net['batch'], img_size=net['height'], augment=True,
+                                        randomize=l['random'])
     args = get_base_args(net)
     args['n'] = imgs  # total number of images per batch
-    args['m'] = dataloader.nF  # total number of images
+    args['m'] = dataloader.nF  # total number of training images
     args['classes'] = classes
     args['jitter'] = jitter
     args['num_boxes'] = l['max_boxes']
@@ -123,44 +150,52 @@ def main(opt):
     args['type'] = 'DETECTION_DATA'
     args['threads'] = 64
 
+    ###########################################################################
 
     # reload saved optimizer state
-    start_epoch = 0
-    best_loss = float('inf')
-    if opt.resume:
-        checkpoint = torch.load('checkpoints/latest.pt', map_location='cpu')
 
-        model.load_state_dict(checkpoint['model'])
-        if torch.cuda.device_count() > 1:
-            print('Using ', torch.cuda.device_count(), ' GPUs')
-            model = nn.DataParallel(model)
-        model.to(device).train()
+    # best_loss = float('inf')
+    # start_epoch = 0
+    # if opt.resume:
+    #     checkpoint = torch.load('checkpoints/latest.pt', map_location='cpu')
+    #
+    #     model.load_state_dict(checkpoint['model'])
+    #     if torch.cuda.device_count() > 1:
+    #         print('Using ', torch.cuda.device_count(), ' GPUs')
+    #         model = nn.DataParallel(model)
+    #     model.to(device).train()
+    #
+    #     optimizer = torch.optim.Adam(model.parameters())
+    #     optimizer.load_state_dict(checkpoint['optimizer'])
+    #
+    #     start_epoch = checkpoint['epoch'] + 1
+    #     best_loss = checkpoint['best_loss']
+    #
+    #     del checkpoint  # current, saved
+    # else:
+    #     if torch.cuda.device_count() > 1:
+    #         print('Using ', torch.cuda.device_count(), ' GPUs')
+    #         model = nn.DataParallel(model)
+    #     model.to(device).train()
+    #
+    #     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4, weight_decay=5e-4)
 
-        # # Transfer learning
-        # for i, (name, p) in enumerate(model.named_parameters()):
-        #     #name = name.replace('module_list.', '')
-        #     #print('%4g %70s %9s %12g %20s %12g %12g' % (
-        #     #    i, name, p.requires_grad, p.numel(), list(p.shape), p.mean(), p.std()))
-        #     if p.shape[0] != 650:  # not YOLO layer
-        #         p.requires_grad = False
+    if torch.cuda.device_count() > 1:
+        print('Using ', torch.cuda.device_count(), ' GPUs')
+        model = nn.DataParallel(model)
+    model.to(device).train()
 
-        # Set optimizer
-        # optimizer = torch.optim.SGD(model.parameters(), lr=.001, momentum=.9, weight_decay=5e-4, nesterov=True)
-        # optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()))
-        optimizer = torch.optim.Adam(model.parameters())
-        optimizer.load_state_dict(checkpoint['optimizer'])
-
-        start_epoch = checkpoint['epoch'] + 1
-        best_loss = checkpoint['best_loss']
-
-        del checkpoint  # current, saved
+    if net['adam']:
+        optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()),
+                                     lr=net['learning_rate'],
+                                     betas=(net['B1'], net['B2']),
+                                     eps=net['eps'],
+                                     weight_decay=net['decay'])
     else:
-        if torch.cuda.device_count() > 1:
-            print('Using ', torch.cuda.device_count(), ' GPUs')
-            model = nn.DataParallel(model)
-        model.to(device).train()
-
-        optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4, weight_decay=5e-4)
+        optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()),
+                                    lr=net['learning_rate'],
+                                    momentum=net['momentum'],
+                                    weight_decay=net['decay'])
 
     def get_current_rate(batch_num):
         # global net
@@ -195,10 +230,9 @@ def main(opt):
     scheduler = LambdaLR(optimizer, lr_lambda=get_current_rate)
 
     # modelinfo(model)
-    avg_loss = -1
-    t0, t1 = time.time(), time.time()
-    print('%10s' * 16 % (
-        'Epoch', 'Batch', 'x', 'y', 'w', 'h', 'conf', 'cls', 'total', 'P', 'R', 'nGT', 'TP', 'FP', 'FN', 'time'))
+    # t0, t1 = time.time(), time.time()
+    # print('%10s' * 16 % (
+    #     'Epoch', 'Batch', 'x', 'y', 'w', 'h', 'conf', 'cls', 'total', 'P', 'R', 'nGT', 'TP', 'FP', 'FN', 'time'))
 
     ###################################################################################################################
 
@@ -253,118 +287,95 @@ def main(opt):
     # del checkpoint
 
     ###################################################################################################################
-    for epoch in range(opt.epochs):
-        epoch += start_epoch
+    count = 0
+    optimizer.zero_grad()
+    # following condition is not checked at every batch unlike darknet
+    while get_current_batch(net) < net['max_batches']:
+        for epoch in range(opt.epochs):
+            # ui = -1  # ??
+            # rloss = defaultdict(float)  # running loss ??
+            # metrics = torch.zeros(4, classes)  # ??
 
-        # Multi-Scale Training
-        # img_size = random.choice(range(10, 20)) * 32
-        # dataloader = load_images_and_labels(train_path, batch_size=opt.batch_size, img_size=img_size, augment=True)
-        # print('Running this epoch with image size %g' % img_size)
+            for i, (images, targets) in enumerate(dataloader):
+                count += 1
+                scheduler.step(count)
+                time_now = time.time()
+                loss = 0
+                net['seen'] += net['batch'] # TODO change with total number of images in this batch
 
-        # Update scheduler
-        # if epoch % 25 == 0:
-        #     scheduler.last_epoch = -1  # for cosine annealing, restart every 25 epochs
-        # scheduler.step()
-        # if epoch <= 100:
-        # for g in optimizer.param_groups:
-        # g['lr'] = 0.0005 * (0.992 ** epoch)  # 1/10 th every 250 epochs
-        # g['lr'] = 0.001 * (0.9773 ** epoch)  # 1/10 th every 100 epochs
-        # g['lr'] = 0.0005 * (0.955 ** epoch)  # 1/10 th every 50 epochs
-        # g['lr'] = 0.0005 * (0.926 ** epoch)  # 1/10 th every 30 epochs
+                nGT = sum([len(x) for x in targets]) # ??
+                if nGT < 1: # ??
+                    continue # ??
 
-        ui = -1
-        rloss = defaultdict(float)  # running loss
-        metrics = torch.zeros(4, num_classes)
-        for i, (imgs, targets) in enumerate(dataloader):
+                loss = model(images.to(device), targets, requestPrecision=True, epoch=epoch)
+                loss.backward()
+                # loss = train_network(net, train)
 
-            nGT = sum([len(x) for x in targets])
-            if nGT < 1:
-                continue
+                if (net['seen'] / net['batch']) % net['subdivisions'] == 0:
+                    optimizer.step()
+                    optimizer.zero_grad()
 
-            loss = model(imgs.to(device), targets, requestPrecision=True, epoch=epoch)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+                if avg_loss < 0:
+                    avg_loss = loss
 
-            ui += 1
-            metrics += model.losses['metrics']
-            for key, val in model.losses.items():
-                rloss[key] = (rloss[key] * ui + val) / (ui + 1)
+                avg_loss = avg_loss*.9 + loss*.1
+                i = get_current_batch(net)
+                print("{:.0f}: loss {:.5f}, avg loss {:.5f} , learning rate {:.15f} , {:.2f} seconds, {:.0f} images"
+                      .format(i, loss.item(), avg_loss.item(), get_current_rate(i), time.time() - time_now, i * imgs))
+                if i % 100 == 0:
+                    buff = backup_directory + 'model_' + str(i) + '.pt'
+                    print("Saving weights to {}".format(buff))
+                    # Save latest checkpoint
+                    checkpoint = {'current_batch': i,
+                                  'loss': loss,
+                                  'model': model.state_dict(),
+                                  'optimizer': optimizer.state_dict()}
+                    torch.save(checkpoint, buff)
+                    del checkpoint
 
-            # Precision
-            precision = metrics[0] / (metrics[0] + metrics[1] + 1e-16)
-            k = (metrics[0] + metrics[1]) > 0
-            if k.sum() > 0:
-                mean_precision = precision[k].mean()
-            else:
-                mean_precision = 0
+                # TODO check below section
+                # ui += 1
+                # metrics += model.losses['metrics']
+                # for key, val in model.losses.items():
+                #     rloss[key] = (rloss[key] * ui + val) / (ui + 1)
 
-            # Recall
-            recall = metrics[0] / (metrics[0] + metrics[2] + 1e-16)
-            k = (metrics[0] + metrics[2]) > 0
-            if k.sum() > 0:
-                mean_recall = recall[k].mean()
-            else:
-                mean_recall = 0
+                # Precision
+                # precision = metrics[0] / (metrics[0] + metrics[1] + 1e-16)
+                # k = (metrics[0] + metrics[1]) > 0
+                # if k.sum() > 0:
+                #     mean_precision = precision[k].mean()
+                # else:
+                #     mean_precision = 0
 
-            s = ('%10s%10s' + '%10.3g' * 14) % (
-                '%g/%g' % (epoch, opt.epochs - 1), '%g/%g' % (i, len(dataloader) - 1), rloss['x'],
-                rloss['y'], rloss['w'], rloss['h'], rloss['conf'], rloss['cls'],
-                rloss['loss'], mean_precision, mean_recall, model.losses['nGT'], model.losses['TP'],
-                model.losses['FP'], model.losses['FN'], time.time() - t1)
-            t1 = time.time()
-            print(s)
+                # # Recall
+                # recall = metrics[0] / (metrics[0] + metrics[2] + 1e-16)
+                # k = (metrics[0] + metrics[2]) > 0
+                # if k.sum() > 0:
+                #     mean_recall = recall[k].mean()
+                # else:
+                #     mean_recall = 0
 
-            # if i == 1:
-            #    return
-
-        # Write epoch results
-        with open('results.txt', 'a') as file:
-            file.write(s + '\n')
-
-        # Update best loss
-        loss_per_target = rloss['loss'] / rloss['nGT']
-        if loss_per_target < best_loss:
-            best_loss = loss_per_target
-
-        # Save latest checkpoint
-        checkpoint = {'epoch': epoch,
-                      'best_loss': best_loss,
-                      'model': model.state_dict(),
-                      'optimizer': optimizer.state_dict()}
-        torch.save(checkpoint, 'checkpoints/latest.pt')
-
-        # Save best checkpoint
-        if best_loss == loss_per_target:
-            os.system('cp checkpoints/latest.pt checkpoints/best.pt')
-
-        # Save backup checkpoint
-        if (epoch > 0) & (epoch % 5 == 0):
-            os.system('cp checkpoints/latest.pt checkpoints/backup' + str(epoch) + '.pt')
-
-    # Save final model
-    dt = time.time() - t0
-    print('Finished %g epochs in %.2fs (%.2fs/epoch)' % (epoch, dt, dt / (epoch + 1)))
+                # s = ('%10s%10s' + '%10.3g' * 14) % (
+                #     '%g/%g' % (epoch, opt.epochs - 1), '%g/%g' % (i, len(dataloader) - 1), rloss['x'],
+                #     rloss['y'], rloss['w'], rloss['h'], rloss['conf'], rloss['cls'],
+                #     rloss['loss'], mean_precision, mean_recall, model.losses['nGT'], model.losses['TP'],
+                #     model.losses['FP'], model.losses['FN'], time.time() - t1)
+                # t1 = time.time()
+                # print(s)
+                # TODO check above section
+    # print("{}".format(i))
+    # Save the final checkpoint
+    buff = backup_directory + 'final_model_' + str(i) + '.pt'
+    print("Saving weights to {}".format(buff))
+    checkpoint = {'current_batch': i,
+                  'loss': loss,
+                  'model': model.state_dict(),
+                  'optimizer': optimizer.state_dict()}
+    torch.save(checkpoint, buff)
+    del checkpoint
 
 
 if __name__ == '__main__':
     torch.cuda.empty_cache()
-
-    opt.h = opt.height
-    opt.w = opt.width
-
-    if opt.nogpu:
-        opt.gpu_index = -1
-
-    opt.gpu = 0
-
-    if opt.gpu_list:
-        opt.gpus = [int(gpu) for gpu in opt.gpu_list.split(',')]
-        opt.ngpus = len(opt.gpus)
-    else:
-        opt.gpu = opt.gpu_index
-        opt.gpus = opt.gpu
-        opt.ngpus = 1
-
     main(opt)
     torch.cuda.empty_cache()
