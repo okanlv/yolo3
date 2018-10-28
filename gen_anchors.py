@@ -3,16 +3,16 @@ Created on Feb 20, 2017
 
 @author: jumabek
 '''
-from os import listdir
+# from os import listdir
 from os.path import isfile, join
 import argparse
-# import cv2
+from tqdm import tqdm
 import numpy as np
 import sys
 import os
-import shutil
+# import shutil
 import random
-import math
+# import math
 
 width_in_cfg_file = 416.
 height_in_cfg_file = 416.
@@ -40,7 +40,8 @@ def avg_IOU(X, centroids):
     n, d = X.shape
     sum = 0.
     for i in range(X.shape[0]):
-        # note IOU() will return array which contains IoU for each centroid and X[i] // slightly ineffective, but I am too lazy
+        # note IOU() will return array which contains IoU for each centroid and X[i] // slightly ineffective,
+        # but I am too lazy
         sum += max(IOU(X[i], centroids))
     return sum / n
 
@@ -113,43 +114,37 @@ def main(argv):
                         # default='\\path\\to\\voc\\filelist\\train.txt',
                         default='coco/trainvalno5k.part',
                         help='path to filelist\n')
-    parser.add_argument('-output_dir', default='generated_anchors/anchors', type=str,
+    parser.add_argument('-output_dir', default='./generated_anchors/anchors', type=str,
                         help='Output anchor directory\n')
     parser.add_argument('-num_clusters', default=5, type=int,
                         help='number of clusters\n')
-
     args = parser.parse_args()
 
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
     f = open(args.filelist)
-
     lines = [line.rstrip('\n') for line in f.readlines()]
 
     annotation_dims = []
+    for idx, filename in enumerate(tqdm(lines)):
 
-    size = np.zeros((1, 1, 3))
-    for idx, line in enumerate(lines):
-
-        line = line.replace('images','labels')
+        filename = filename.replace('images', 'labels')
         # line = line.replace('img1','labels')
         # line = line.replace('JPEGImages', 'labels')
 
-        line = line.replace('.jpg', '.txt')
-        line = line.replace('.png', '.txt')
-        line = '/home/okan/Desktop/yolov3/coco' + line
-        # print(line)
-        f2 = open(line)
+        filename = filename.replace('.jpg', '.txt')
+        filename = filename.replace('.png', '.txt')
+        filename = './coco' + filename
+
+        f2 = open(filename)
         for line in f2.readlines():
             line = line.rstrip('\n')
             w, h = line.rstrip(" ").split(' ')[3:]
-            # print(w,h)
             annotation_dims.append(tuple(map(float, (w, h))))
-        if (idx+1) % 1000 == 0:
-            print("[{} / {}] files are read".format(idx, len(lines)))
-            if idx>10000:
-                break
+        if idx > 100:
+            break
+
     annotation_dims = np.array(annotation_dims)
 
     print("All files are readed")
@@ -157,15 +152,15 @@ def main(argv):
 
     if args.num_clusters == 0:
         for num_clusters in range(1, 11):  # we make 1 through 10 clusters
-            anchor_file = join(args.output_dir, 'anchors%d.txt' % (num_clusters))
+            anchor_file = join(args.output_dir, 'anchors%d.txt' % num_clusters)
 
-            indices = [random.randrange(annotation_dims.shape[0]) for i in range(num_clusters)]
+            indices = [random.randrange(annotation_dims.shape[0]) for _ in range(num_clusters)]
             centroids = annotation_dims[indices]
             kmeans(annotation_dims, centroids, eps, anchor_file)
             print('centroids.shape', centroids.shape)
     else:
-        anchor_file = join(args.output_dir, 'anchors%d.txt' % (args.num_clusters))
-        indices = [random.randrange(annotation_dims.shape[0]) for i in range(args.num_clusters)]
+        anchor_file = join(args.output_dir, 'anchors%d.txt' % args.num_clusters)
+        indices = [random.randrange(annotation_dims.shape[0]) for _ in range(args.num_clusters)]
         centroids = annotation_dims[indices]
         kmeans(annotation_dims, centroids, eps, anchor_file)
         print('centroids.shape', centroids.shape)
